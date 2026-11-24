@@ -1,78 +1,143 @@
-/* animations.js — GSAP + ScrollTrigger. Progressive enhancement: if GSAP fails to load or the
-   visitor prefers reduced motion, nothing is hidden and all content stays visible. */
+/* animations.js — floating elements (no library needed) + GSAP scroll animations */
 (function () {
   'use strict';
-  if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') return;
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  gsap.registerPlugin(ScrollTrigger);
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var $$ = function (s, c) { return Array.prototype.slice.call((c || document).querySelectorAll(s)); };
-  var EASE = 'power3.out';
 
-  /* ---------- Split text into masked words ---------- */
-  function splitWords(el) {
-    (function walk(node) {
-      Array.prototype.slice.call(node.childNodes).forEach(function (n) {
-        if (n.nodeType === 3) {
-          var frag = document.createDocumentFragment();
-          n.textContent.split(/(\s+)/).forEach(function (t) {
-            if (!t) return;
-            if (/^\s+$/.test(t)) { frag.appendChild(document.createTextNode(' ')); return; }
-            var w = document.createElement('span'); w.className = 'w';
-            var i = document.createElement('span'); i.className = 'wi'; i.textContent = t;
-            w.appendChild(i); frag.appendChild(w);
-          });
-          n.replaceWith(frag);
-        } else if (n.nodeType === 1 && !n.classList.contains('w')) walk(n);
-      });
-    })(el);
-    return el.querySelectorAll('.wi');
-  }
+  /* =====================================================
+     1. FLOATING ANIMATION
+     Uses the CSS `translate` / `rotate` properties through the Web Animations API,
+     so it never clashes with your hover `transform` effects or with GSAP.
+     [selector, amplitude (px), duration (ms), tilt (deg)]
+  ===================================================== */
+  function initFloating() {
+    if (reduce || !Element.prototype.animate) return;
 
-  function setup() {
-    /* ---------- Hero intro ---------- */
-    var heroWords = [];
-    $$('.hero [data-split]').forEach(function (el) { heroWords = heroWords.concat(Array.prototype.slice.call(splitWords(el))); });
-    var tl = gsap.timeline({ defaults: { ease: EASE } });
-    tl.from(heroWords, { yPercent: 115, duration: 1.1, stagger: .07 })
-      .from('[data-hero="fade"]', { y: 24, opacity: 0, duration: .9, stagger: .12 }, '-=.7')
-      .from('[data-hero="visual"]', { clipPath: 'inset(0 0 100% 0)', duration: 1.3, ease: 'power4.inOut' }, 0.1)
-      .from('.hero__badge', { y: 30, opacity: 0, duration: .8 }, '-=.4');
+    var groups = [
+      ['.wy__visual',      14, 7000, 1.2],   // Why section photo
+      ['.mo__visual',      16, 7600, 1.0],   // Chain of the Month photo
+      ['.cta__visual',     16, 7200, 1.2],   // Final CTA photo
+      ['.sc__badge',        5, 5200, 0],     // video logo badge
+      ['.pr-step__img',    10, 5600, 0],     // process step images
+      ['.wy-card__icon',    6, 4600, 0],     // why-card icons
+      ['.cf-card__icon',    6, 4600, 0],     // craftsmanship icons
+      ['.mo-perk img',      5, 4400, 0],     // perk icons
+      ['.pf-card__price',   4, 4200, 0]      // product price badges
+    ];
 
-    /* ---------- Text reveal for section headings ---------- */
-    $$('[data-split]:not(.hero [data-split])').forEach(function (el) {
-      var words = splitWords(el);
-      gsap.from(words, {
-        yPercent: 110, duration: 1, ease: EASE, stagger: .06,
-        scrollTrigger: { trigger: el, start: 'top 88%', once: true }
+    // only animate while on screen
+    var io = null;
+    if ('IntersectionObserver' in window) {
+      io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          var anim = e.target._float;
+          if (!anim) return;
+          if (e.isIntersecting) anim.play(); else anim.pause();
+        });
+      }, { rootMargin: '120px' });
+    }
+
+    groups.forEach(function (g) {
+      $$(g[0]).forEach(function (el, i) {
+        var amp = g[1];
+        var dur = g[2] + (i % 3) * 450;       // slightly different speed per item
+        var phase = -(dur * ((i * 0.37) % 1)); // different starting point per item
+
+        var anim = el.animate(
+          [
+            { translate: '0 0',                 rotate: '0deg' },
+            { translate: '0 ' + (-amp) + 'px',  rotate: (g[3] || 0) + 'deg' }
+          ],
+          {
+            duration: dur,
+            iterations: Infinity,
+            direction: 'alternate',
+            easing: 'ease-in-out',
+            delay: phase
+          }
+        );
+
+        if (io) {
+          anim.pause();
+          el._float = anim;
+          io.observe(el);
+        }
       });
     });
+  }
 
-    /* ---------- Generic fade-up reveals ---------- */
+  /* =====================================================
+     2. GSAP SCROLL ANIMATIONS
+  ===================================================== */
+  function initGsap() {
+    if (reduce) return;
+    if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') return;
+
+    gsap.registerPlugin(ScrollTrigger);
+
+    var EASE = 'power3.out';
+    // clearing these afterwards keeps your CSS hover effects working
+    var CLEAR = 'transform,opacity,transition';
+
+    /* ---- section headings ---- */
+    $$('.cs__head,.wy__head,.tb__head,.cf__head,.pr__head,.pf__head,.vs__head,.tc__head,.fq__intro,.mo__copy')
+      .forEach(function (el) {
+        gsap.from(el, {
+          y: 40, opacity: 0, duration: 1, ease: EASE, clearProps: CLEAR,
+          scrollTrigger: { trigger: el, start: 'top 88%', once: true }
+        });
+      });
+
+    /* ---- generic [data-reveal] / [data-stagger] (final CTA) ---- */
     $$('[data-reveal]').forEach(function (el) {
       gsap.from(el, {
-        y: 40, opacity: 0, duration: 1, ease: EASE,
+        y: 40, opacity: 0, duration: 1, ease: EASE, clearProps: CLEAR,
         scrollTrigger: { trigger: el, start: 'top 90%', once: true }
       });
     });
 
-    /* ---------- Staggered groups ---------- */
     $$('[data-stagger]').forEach(function (group) {
       gsap.from(group.children, {
-        y: 50, opacity: 0, duration: .9, ease: EASE, stagger: .12,
-        scrollTrigger: { trigger: group, start: 'top 88%', once: true }
+        y: 40, opacity: 0, duration: .9, ease: EASE, stagger: .12, clearProps: CLEAR,
+        scrollTrigger: { trigger: group, start: 'top 90%', once: true }
       });
     });
 
-    /* ---------- Product + review cards stagger on first view ---------- */
-    [['.prod-swiper .swiper-slide', '.prod-swiper'], ['.testi-swiper .swiper-slide', '.testi-swiper']].forEach(function (p) {
-      gsap.from(p[0], {
-        y: 60, opacity: 0, duration: 1, ease: EASE, stagger: .14,
-        scrollTrigger: { trigger: p[1], start: 'top 85%', once: true }
+    /* ---- image mask reveals ---- */
+    $$('.sc__frame,.wy__frame,.mo__frame,.cta__frame').forEach(function (el) {
+      gsap.from(el, {
+        clipPath: 'inset(0 0 100% 0)', duration: 1.3, ease: 'power4.inOut', clearProps: 'clipPath',
+        scrollTrigger: { trigger: el, start: 'top 85%', once: true }
       });
     });
 
-    /* ---------- Image parallax ---------- */
+    /* ---- cards: staggered rise per row ---- */
+    function batchIn(selector, y) {
+      if (!document.querySelector(selector)) return;
+      gsap.set(selector, { opacity: 0, y: y || 50, transition: 'none' });
+      ScrollTrigger.batch(selector, {
+        start: 'top 90%',
+        once: true,
+        onEnter: function (batch) {
+          gsap.to(batch, {
+            opacity: 1, y: 0, duration: .9, ease: EASE, stagger: .12,
+            overwrite: true, clearProps: CLEAR
+          });
+        }
+      });
+    }
+
+    batchIn('.cs-card');
+    batchIn('.wy-card');
+    batchIn('.cf-card');
+    batchIn('.pr-step');
+    batchIn('.pf-card');
+    batchIn('.mo-perk', 40);
+    batchIn('.fq-item', 30);
+    batchIn('.cmp__row:not(.cmp__row--head)', 24);
+
+    /* ---- image parallax (final CTA photo) ---- */
     $$('[data-parallax]').forEach(function (img) {
       var amt = parseFloat(img.getAttribute('data-parallax')) || 8;
       gsap.fromTo(img, { yPercent: -amt * .5 }, {
@@ -81,73 +146,35 @@
       });
     });
 
-    /* ---------- Section image mask reveals ---------- */
-    $$('.craft__img, .why__figure, .month__frame, .cta__frame').forEach(function (el) {
-      gsap.from(el, {
-        clipPath: 'inset(0 0 100% 0)', duration: 1.3, ease: 'power4.inOut',
-        scrollTrigger: { trigger: el, start: 'top 85%', once: true }
-      });
-    });
-
-    /* ---------- Collection cards (varied entrances) ---------- */
-    $$('.cat').forEach(function (cat, i) {
-      gsap.from(cat.querySelector('.cat__body'), {
-        y: 30, opacity: 0, duration: .9, delay: .15 + i * .05, ease: EASE,
-        scrollTrigger: { trigger: cat, start: 'top 85%', once: true }
-      });
-    });
-
-    /* ---------- Process timeline: animated connecting line + step pop ---------- */
-    var steps = document.querySelector('.steps');
-    if (steps) {
-      gsap.to('.steps__fill', {
-        scaleX: 1, ease: 'none',
-        scrollTrigger: { trigger: steps, start: 'top 70%', end: 'bottom 55%', scrub: .6 }
-      });
-      gsap.from('.step', {
-        y: 50, opacity: 0, duration: .9, ease: EASE, stagger: .15,
-        scrollTrigger: { trigger: steps, start: 'top 82%', once: true }
+    /* ---- hero background: gentle scroll parallax ---- */
+    var heroImg = document.querySelector('.hx__img');
+    if (heroImg && window.innerWidth > 567) {
+      gsap.fromTo(heroImg, { scale: 1.15, yPercent: 0 }, {
+        scale: 1.15, yPercent: 5, ease: 'none',
+        scrollTrigger: { trigger: '.hx', start: 'top top', end: 'bottom top', scrub: true }
       });
     }
 
-    /* ---------- Comparison rows ---------- */
-    gsap.from('.cmp__row', {
-      y: 30, opacity: 0, duration: .8, ease: EASE, stagger: .12,
-      scrollTrigger: { trigger: '.cmp', start: 'top 80%', once: true }
-    });
-
-    /* ---------- FAQ items ---------- */
-    gsap.from('.acc', {
-      y: 24, opacity: 0, duration: .8, ease: EASE, stagger: .1,
-      scrollTrigger: { trigger: '.faq__list', start: 'top 85%', once: true }
-    });
-
-    /* ---------- Counters (only the stats that exist on the original site: 15+ years, 4.5 rating) ---------- */
-    $$('[data-count]').forEach(function (el) {
-      var end = parseFloat(el.getAttribute('data-count'));
-      var dec = parseInt(el.getAttribute('data-decimals') || '0', 10);
-      var suffix = el.getAttribute('data-suffix') || '';
-      var obj = { v: 0 };
-      el.textContent = (0).toFixed(dec) + suffix;
-      gsap.to(obj, {
-        v: end, duration: 1.8, ease: 'power2.out',
-        scrollTrigger: { trigger: el, start: 'top 92%', once: true },
-        onUpdate: function () { el.textContent = obj.v.toFixed(dec) + suffix; }
+    /* ---- CTA background glow fade-in ---- */
+    if (document.querySelector('.cta__bg')) {
+      gsap.from('.cta__bg', {
+        opacity: 0, duration: 1.4,
+        scrollTrigger: { trigger: '.cta', start: 'top 80%', once: true }
       });
-    });
+    }
 
-    /* ---------- Section background transition: gentle fade of the dark CTA ---------- */
-    gsap.from('.cta__bg', {
-      opacity: 0, duration: 1.4,
-      scrollTrigger: { trigger: '.cta', start: 'top 80%', once: true }
-    });
+    /* ---- recalculate positions once everything has loaded ---- */
+    window.addEventListener('load', function () { ScrollTrigger.refresh(); });
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function () { ScrollTrigger.refresh(); });
+    }
   }
 
-  /* Run after layout + fonts are ready so triggers measure correctly */
-  function start() { setup(); window.addEventListener('load', function () { ScrollTrigger.refresh(); }); }
-  if (document.readyState === 'complete') start();
-  else window.addEventListener('DOMContentLoaded', start);
+  function start() {
+    try { initFloating(); } catch (err) { console.error('[animations.js] floating:', err); }
+    try { initGsap(); } catch (err) { console.error('[animations.js] gsap:', err); }
+  }
 
-  /* Refresh triggers when fonts finish loading */
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { ScrollTrigger.refresh(); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();
